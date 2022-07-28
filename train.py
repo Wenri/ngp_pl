@@ -25,7 +25,7 @@ from losses import NeRFLoss
 
 # metrics
 from torchmetrics import (
-    PeakSignalNoiseRatio, 
+    PeakSignalNoiseRatio,
     StructuralSimilarityIndexMeasure
 )
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
@@ -39,12 +39,14 @@ from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 from utils import slim_ckpt, load_ckpt
 
-import warnings; warnings.filterwarnings("ignore")
+import warnings;
+
+warnings.filterwarnings("ignore")
 
 
 def depth2img(depth):
-    depth = (depth-depth.min())/(depth.max()-depth.min())
-    depth_img = cv2.applyColorMap((depth*255).astype(np.uint8),
+    depth = (depth - depth.min()) / (depth.max() - depth.min())
+    depth_img = cv2.applyColorMap((depth * 255).astype(np.uint8),
                                   cv2.COLORMAP_TURBO)
 
     return depth_img
@@ -71,9 +73,9 @@ class NeRFSystem(LightningModule):
         self.model = NGP(scale=self.hparams.scale, rgb_act=rgb_act)
         G = self.model.grid_size
         self.model.register_buffer('density_grid',
-            torch.zeros(self.model.cascades, G**3))
+                                   torch.zeros(self.model.cascades, G ** 3))
         self.model.register_buffer('grid_coords',
-            create_meshgrid3d(G, G, G, False, dtype=torch.int32).reshape(-1, 3))
+                                   create_meshgrid3d(G, G, G, False, dtype=torch.int32).reshape(-1, 3))
 
     def forward(self, batch, split):
         if split=='train':
@@ -94,7 +96,7 @@ class NeRFSystem(LightningModule):
         kwargs = {'test_time': split!='train',
                   'random_bg': self.hparams.random_bg}
         if self.hparams.dataset_name in ['colmap', 'nerfpp']:
-            kwargs['exp_step_factor'] = 1/256
+            kwargs['exp_step_factor'] = 1 / 256
         if self.hparams.use_exposure:
             kwargs['exposure'] = batch['exposure']
 
@@ -118,9 +120,9 @@ class NeRFSystem(LightningModule):
         if self.hparams.optimize_ext:
             N = len(self.train_dataset.poses)
             self.register_parameter('dR',
-                nn.Parameter(torch.zeros(N, 3, device=self.device)))
+                                    nn.Parameter(torch.zeros(N, 3, device=self.device)))
             self.register_parameter('dT',
-                nn.Parameter(torch.zeros(N, 3, device=self.device)))
+                                    nn.Parameter(torch.zeros(N, 3, device=self.device)))
 
         load_ckpt(self.model, self.hparams.weight_path)
 
@@ -138,7 +140,7 @@ class NeRFSystem(LightningModule):
             opts += [pose_r_opt, pose_t_opt]
         net_sch = CosineAnnealingLR(self.net_opt,
                                     self.hparams.num_epochs,
-                                    self.hparams.lr/30)
+                                    self.hparams.lr / 30)
 
         return opts, [net_sch]
 
@@ -162,9 +164,9 @@ class NeRFSystem(LightningModule):
 
     def training_step(self, batch, batch_nb, *args):
         if self.global_step%self.update_interval == 0:
-            self.model.update_density_grid(0.01*MAX_SAMPLES/3**0.5,
+            self.model.update_density_grid(0.01 * MAX_SAMPLES / 3 ** 0.5,
                                            warmup=self.global_step<self.warmup_steps,
-                                           erode=self.hparams.dataset_name=='colmap')
+                                           erode=self.hparams.dataset_name == 'colmap')
 
         results = self(batch, split='train')
         loss_d = self.loss(results, batch)
@@ -208,15 +210,15 @@ class NeRFSystem(LightningModule):
         logs['ssim'] = self.val_ssim.compute()
         self.val_ssim.reset()
         if self.hparams.eval_lpips:
-            self.val_lpips(torch.clip(rgb_pred*2-1, -1, 1),
-                           torch.clip(rgb_gt*2-1, -1, 1))
+            self.val_lpips(torch.clip(rgb_pred * 2 - 1, -1, 1),
+                           torch.clip(rgb_gt * 2 - 1, -1, 1))
             logs['lpips'] = self.val_lpips.compute()
             self.val_lpips.reset()
 
-        if not self.hparams.no_save_test: # save test image to disk
+        if not self.hparams.no_save_test:  # save test image to disk
             idx = batch['img_idxs']
             rgb_pred = rearrange(results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
-            rgb_pred = (rgb_pred*255).astype(np.uint8)
+            rgb_pred = (rgb_pred * 255).astype(np.uint8)
             depth = depth2img(rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
             imageio.imsave(os.path.join(self.val_dir, f'{idx:03d}.png'), rgb_pred)
             imageio.imsave(os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
@@ -244,8 +246,7 @@ class NeRFSystem(LightningModule):
         return items
 
 
-if __name__ == '__main__':
-    hparams = get_opts()
+def main(hparams):
     if hparams.val_only and (not hparams.ckpt_path):
         raise ValueError('You need to provide a @ckpt_path for validation!')
     system = NeRFSystem(hparams)
@@ -270,21 +271,21 @@ if __name__ == '__main__':
                       accelerator='gpu',
                       devices=hparams.num_gpus,
                       strategy=DDPPlugin(find_unused_parameters=False)
-                               if hparams.num_gpus>1 else None,
+                      if hparams.num_gpus > 1 else None,
                       num_sanity_val_steps=-1 if hparams.val_only else 0,
                       precision=16)
 
     trainer.fit(system, ckpt_path=hparams.ckpt_path)
 
-    if not hparams.val_only: # save slimmed ckpt for the last epoch
+    if not hparams.val_only:  # save slimmed ckpt for the last epoch
         ckpt_ = \
             slim_ckpt(f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs-1}.ckpt',
                       save_poses=hparams.optimize_ext)
         torch.save(ckpt_, f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs-1}_slim.ckpt')
 
     if (not hparams.no_save_test) and \
-       hparams.dataset_name=='nsvf' and \
-       'Synthetic' in hparams.root_dir: # save video
+            hparams.dataset_name == 'nsvf' and \
+            'Synthetic' in hparams.root_dir:  # save video
         imgs = sorted(glob.glob(os.path.join(system.val_dir, '*.png')))
         imageio.mimsave(os.path.join(system.val_dir, 'rgb.mp4'),
                         [imageio.imread(img) for img in imgs[::2]],
@@ -292,3 +293,7 @@ if __name__ == '__main__':
         imageio.mimsave(os.path.join(system.val_dir, 'depth.mp4'),
                         [imageio.imread(img) for img in imgs[1::2]],
                         fps=30, macro_block_size=1)
+
+
+if __name__ == '__main__':
+    main(get_opts())

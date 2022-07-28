@@ -27,12 +27,12 @@ def get_ray_directions(H, W, K, device='cpu', random=False, return_uv=False, fla
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
     if random:
         directions = \
-            torch.stack([(u-cx+torch.rand_like(u))/fx,
-                         (v-cy+torch.rand_like(v))/fy,
+            torch.stack([(u - cx + torch.rand_like(u)) / fx,
+                         (v - cy + torch.rand_like(v)) / fy,
                          torch.ones_like(u)], -1)
-    else: # pass by the center
+    else:  # pass by the center
         directions = \
-            torch.stack([(u-cx+0.5)/fx, (v-cy+0.5)/fy, torch.ones_like(u)], -1)
+            torch.stack([(u - cx + 0.5) / fx, (v - cy + 0.5) / fy, torch.ones_like(u)], -1)
     if flatten:
         directions = directions.reshape(-1, 3)
         grid = grid.reshape(-1, 2)
@@ -57,7 +57,7 @@ def get_rays(directions, c2w):
         rays_o: (N, 3), the origin of the rays in world coordinate
         rays_d: (N, 3), the direction of the rays in world coordinate
     """
-    if c2w.ndim==2:
+    if c2w.ndim == 2:
         # Rotate ray directions from camera coordinate to the world coordinate
         rays_d = directions @ c2w[:, :3].T
     else:
@@ -81,22 +81,25 @@ def axisangle_to_R(v):
     Outputs:
         R: (B, 3, 3)
     """
-    zero = torch.zeros_like(v[:, :1]) # (B, 1)
-    skew_v0 = torch.cat([zero, -v[:, 2:3], v[:, 1:2]], 1) # (B, 3)
-    skew_v1 = torch.cat([v[:, 2:3], zero, -v[:, 0:1]], 1)
-    skew_v2 = torch.cat([-v[:, 1:2], v[:, 0:1], zero], 1)
-    skew_v = torch.stack([skew_v0, skew_v1, skew_v2], dim=1) # (B, 3, 3)
+    zero = torch.zeros_like(v[..., :1])  # (B, 1)
+    skew_v0 = torch.cat([zero, -v[..., 2:3], v[..., 1:2]], dim=-1)  # (B, 3)
+    skew_v1 = torch.cat([v[..., 2:3], zero, -v[..., 0:1]], dim=-1)
+    skew_v2 = torch.cat([-v[..., 1:2], v[..., 0:1], zero], dim=-1)
+    skew_v = torch.stack([skew_v0, skew_v1, skew_v2], dim=-1)  # (B, 3, 3)
 
-    norm_v = rearrange(torch.norm(v, dim=1)+1e-7, 'b -> b 1 1')
+    norm_v = torch.norm(v, dim=-1) + 1e-7
+    norm_v.unsqueeze_(-1)
+    norm_v.unsqueeze_(-1)
+
     eye = torch.eye(3, device=v.device)
-    R = eye + (torch.sin(norm_v)/norm_v)*skew_v + \
-        ((1-torch.cos(norm_v))/norm_v**2)*(skew_v@skew_v)
+    R = eye + (torch.sin(norm_v) / norm_v) * skew_v + \
+        ((1 - torch.cos(norm_v)) / norm_v ** 2) * (skew_v @ skew_v)
     return R
 
 
 def normalize(v):
     """Normalize a vector."""
-    return v/np.linalg.norm(v)
+    return v / np.linalg.norm(v)
 
 
 def average_poses(poses, pts3d=None):
@@ -125,18 +128,18 @@ def average_poses(poses, pts3d=None):
         center = poses[..., 3].mean(0)
 
     # 2. Compute the z axis
-    z = normalize(poses[..., 2].mean(0)) # (3)
+    z = normalize(poses[..., 2].mean(0))  # (3)
 
     # 3. Compute axis y' (no need to normalize as it's not the final output)
-    y_ = poses[..., 1].mean(0) # (3)
+    y_ = poses[..., 1].mean(0)  # (3)
 
     # 4. Compute the x axis
-    x = normalize(np.cross(y_, z)) # (3)
+    x = normalize(np.cross(y_, z))  # (3)
 
     # 5. Compute the y axis (as z and x are normalized, y is already of norm 1)
-    y = np.cross(z, x) # (3)
+    y = np.cross(z, x)  # (3)
 
-    pose_avg = np.stack([x, y, z, center], 1) # (3, 4)
+    pose_avg = np.stack([x, y, z, center], 1)  # (3, 4)
 
     return pose_avg
 
@@ -153,17 +156,17 @@ def center_poses(poses, pts3d=None):
         pts3d_centered: (N, 3) centered point cloud
     """
 
-    pose_avg = average_poses(poses, pts3d) # (3, 4)
+    pose_avg = average_poses(poses, pts3d)  # (3, 4)
     pose_avg_homo = np.eye(4)
-    pose_avg_homo[:3] = pose_avg # convert to homogeneous coordinate for faster computation
-                                 # by simply adding 0, 0, 0, 1 as the last row
+    pose_avg_homo[:3] = pose_avg  # convert to homogeneous coordinate for faster computation
+    # by simply adding 0, 0, 0, 1 as the last row
     pose_avg_inv = np.linalg.inv(pose_avg_homo)
-    last_row = np.tile(np.array([0, 0, 0, 1]), (len(poses), 1, 1)) # (N_images, 1, 4)
+    last_row = np.tile(np.array([0, 0, 0, 1]), (len(poses), 1, 1))  # (N_images, 1, 4)
     poses_homo = \
-        np.concatenate([poses, last_row], 1) # (N_images, 4, 4) homogeneous coordinate
+        np.concatenate([poses, last_row], 1)  # (N_images, 4, 4) homogeneous coordinate
 
-    poses_centered = pose_avg_inv @ poses_homo # (N_images, 4, 4)
-    poses_centered = poses_centered[:, :3] # (N_images, 3, 4)
+    poses_centered = pose_avg_inv @ poses_homo  # (N_images, 4, 4)
+    poses_centered = poses_centered[:, :3]  # (N_images, 3, 4)
 
     if pts3d is not None:
         pts3d_centered = pts3d @ pose_avg_inv[:, :3].T + pose_avg_inv[:, 3:].T
@@ -180,30 +183,31 @@ def create_spheric_poses(radius, mean_h, n_poses=120):
     Outputs:
         spheric_poses: (n_poses, 3, 4) the poses in the circular path
     """
+
     def spheric_pose(theta, phi, radius):
-        trans_t = lambda t : np.array([
-            [1,0,0,0],
-            [0,1,0,2*mean_h],
-            [0,0,1,-t]
+        trans_t = lambda t: np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 2 * mean_h],
+            [0, 0, 1, -t]
         ])
 
-        rot_phi = lambda phi : np.array([
-            [1,0,0],
-            [0,np.cos(phi),-np.sin(phi)],
-            [0,np.sin(phi), np.cos(phi)]
+        rot_phi = lambda phi: np.array([
+            [1, 0, 0],
+            [0, np.cos(phi), -np.sin(phi)],
+            [0, np.sin(phi), np.cos(phi)]
         ])
 
-        rot_theta = lambda th : np.array([
-            [np.cos(th),0,-np.sin(th)],
-            [0,1,0],
-            [np.sin(th),0, np.cos(th)]
+        rot_theta = lambda th: np.array([
+            [np.cos(th), 0, -np.sin(th)],
+            [0, 1, 0],
+            [np.sin(th), 0, np.cos(th)]
         ])
 
         c2w = rot_theta(theta) @ rot_phi(phi) @ trans_t(radius)
-        c2w = np.array([[-1,0,0],[0,0,1],[0,1,0]]) @ c2w
+        c2w = np.array([[-1, 0, 0], [0, 0, 1], [0, 1, 0]]) @ c2w
         return c2w
 
     spheric_poses = []
-    for th in np.linspace(0, 2*np.pi, n_poses+1)[:-1]:
-        spheric_poses += [spheric_pose(th, -np.pi/12, radius)]
+    for th in np.linspace(0, 2 * np.pi, n_poses + 1)[:-1]:
+        spheric_poses += [spheric_pose(th, -np.pi / 12, radius)]
     return np.stack(spheric_poses, 0)
