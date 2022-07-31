@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch import nn
 from opt import get_opts
@@ -102,7 +104,7 @@ class NeRFSystem(LightningModule):
 
         return render(self.model, rays_o, rays_d, **kwargs)
 
-    def setup(self, stage):
+    def setup(self, stage: Optional[str] = None) -> None:
         dataset = dataset_dict[self.hparams.dataset_name]
         kwargs = {'root_dir': self.hparams.root_dir,
                   'downsample': self.hparams.downsample}
@@ -279,9 +281,9 @@ def main(hparams):
 
     if not hparams.val_only:  # save slimmed ckpt for the last epoch
         ckpt_ = \
-            slim_ckpt(f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs-1}.ckpt',
+            slim_ckpt(f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs - 1}.ckpt',
                       save_poses=hparams.optimize_ext)
-        torch.save(ckpt_, f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs-1}_slim.ckpt')
+        torch.save(ckpt_, f'ckpts/{hparams.dataset_name}/{hparams.exp_name}/epoch={hparams.num_epochs - 1}_slim.ckpt')
 
     if (not hparams.no_save_test) and \
             hparams.dataset_name == 'nsvf' and \
