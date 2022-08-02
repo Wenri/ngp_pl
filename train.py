@@ -16,8 +16,8 @@ from datasets import dataset_dict
 from datasets.ray_utils import axisangle_to_R, get_rays
 
 # models
-from kornia.utils.grid import create_meshgrid3d
 from models.networks import NGP
+from models.nerf_helpers import NeRF
 from models.rendering import render, MAX_SAMPLES
 
 # optimizer, losses
@@ -41,7 +41,7 @@ from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 from utils import slim_ckpt, load_ckpt
 
-import warnings;
+import warnings
 
 warnings.filterwarnings("ignore")
 
@@ -72,15 +72,11 @@ class NeRFSystem(LightningModule):
                 p.requires_grad = False
 
         rgb_act = 'None' if self.hparams.use_exposure else 'Sigmoid'
-        self.model = NGP(scale=self.hparams.scale, rgb_act=rgb_act)
-        G = self.model.grid_size
-        self.model.register_buffer('density_grid',
-                                   torch.zeros(self.model.cascades, G ** 3))
-        self.model.register_buffer('grid_coords',
-                                   create_meshgrid3d(G, G, G, False, dtype=torch.int32).reshape(-1, 3))
+        # self.model = NGP(scale=self.hparams.scale, rgb_act=rgb_act)
+        self.model = NeRF(scale=self.hparams.scale, rgb_act=rgb_act)
 
     def forward(self, batch, split):
-        if split=='train':
+        if split == 'train':
             poses = self.poses[batch['img_idxs']]
             directions = self.directions[batch['pix_idxs']]
         else:
@@ -95,7 +91,7 @@ class NeRFSystem(LightningModule):
 
         rays_o, rays_d = get_rays(directions, poses)
 
-        kwargs = {'test_time': split!='train',
+        kwargs = {'test_time': split != 'train',
                   'random_bg': self.hparams.random_bg}
         if self.hparams.dataset_name in ['colmap', 'nerfpp']:
             kwargs['exp_step_factor'] = 1 / 256
@@ -160,14 +156,12 @@ class NeRFSystem(LightningModule):
                           pin_memory=True)
 
     def on_train_start(self):
-        self.model.mark_invisible_cells(self.train_dataset.K.to(self.device),
-                                        self.poses,
-                                        self.train_dataset.img_wh)
+        self.model.mark_invisible_cells(self.train_dataset.K.to(self.device), self.poses, self.train_dataset.img_wh)
 
     def training_step(self, batch, batch_nb, *args):
-        if self.global_step%self.update_interval == 0:
+        if self.global_step % self.update_interval == 0:
             self.model.update_density_grid(0.01 * MAX_SAMPLES / 3 ** 0.5,
-                                           warmup=self.global_step<self.warmup_steps,
+                                           warmup=True,  # self.global_step < self.warmup_steps,
                                            erode=self.hparams.dataset_name == 'colmap')
 
         results = self(batch, split='train')
@@ -175,16 +169,16 @@ class NeRFSystem(LightningModule):
         if self.hparams.use_exposure:
             zero_radiance = torch.zeros(1, 3, device=self.device)
             unit_exposure_rgb = self.model.log_radiance_to_rgb(zero_radiance,
-                                    **{'exposure': torch.ones(1, 1, device=self.device)})
+                                                               **{'exposure': torch.ones(1, 1, device=self.device)})
             loss_d['unit_exposure'] = \
-                0.5*(unit_exposure_rgb-self.train_dataset.unit_exposure_rgb)**2
+                0.5 * (unit_exposure_rgb - self.train_dataset.unit_exposure_rgb) ** 2
         loss = sum(lo.mean() for lo in loss_d.values())
 
         with torch.no_grad():
             self.train_psnr(results['rgb'], batch['rgb'])
         self.log('lr', self.net_opt.param_groups[0]['lr'])
         self.log('train/loss', loss)
-        self.log('train/s_per_ray', results['total_samples']/len(batch['rgb']), True)
+        self.log('train/s_per_ray', results['total_samples'] / len(batch['rgb']), True)
         self.log('train/psnr', self.train_psnr, True)
 
         return loss
