@@ -22,7 +22,7 @@ def render(model, rays_o, rays_d, **kwargs):
     Outputs:
         result: dictionary containing final rgb and depth
     """
-    rays_o = rays_o.contiguous();
+    rays_o = rays_o.contiguous()
     rays_d = rays_d.contiguous()
     _, hits_t, _ = \
         RayAABBIntersector.apply(rays_o, rays_d, model.center, model.half_size, 1)
@@ -156,7 +156,6 @@ def __render_rays_train(model, rays_o, rays_d, hits_t, **kwargs):
             rgb_bg = torch.rand(3, device=rays_o.device)
         else:
             rgb_bg = torch.zeros(3, device=rays_o.device)
-    results['rgb'] = results['rgb'] + \
-                     rgb_bg * rearrange(1 - results['opacity'], 'n -> n 1')
+    results['rgb'] = results['rgb'] + rgb_bg * rearrange(1 - results['opacity'], 'n -> n 1')
 
     return results

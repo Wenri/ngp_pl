@@ -77,7 +77,8 @@ class NGPGUI:
         # TODO: set these attributes by gui
         if self.hparams.dataset_name in ['colmap', 'nerfpp']:
             exp_step_factor = 1/256
-        else: exp_step_factor = 0
+        else:
+            exp_step_factor = 0
 
         results = render(self.model, rays_o, rays_d,
                          **{'test_time': True,

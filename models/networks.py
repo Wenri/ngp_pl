@@ -53,16 +53,15 @@ class NGPBase(nn.Module):
                    selected at each cascade
         """
         cells = []
+        device = self.density_grid.device
         for c in range(self.cascades):
             # uniform cells
-            coords1 = torch.randint(self.grid_size, (M, 3), dtype=torch.int32,
-                                    device=self.density_grid.device)
+            coords1 = torch.randint(self.grid_size, (M, 3), dtype=torch.int32, device=device)
             indices1 = vren.morton3D(coords1).long()
             # occupied cells
             indices2 = torch.nonzero(self.density_grid[c] > density_threshold)[:, 0]
             if len(indices2) > 0:
-                rand_idx = torch.randint(len(indices2), (M,),
-                                         device=self.density_grid.device)
+                rand_idx = torch.randint(len(indices2), (M,), device=device)
                 indices2 = indices2[rand_idx]
                 coords2 = vren.morton3D_invert(indices2.int())
                 # concatenate
@@ -104,16 +103,14 @@ class NGPBase(nn.Module):
                            (uv[:, 1] >= 0) & (uv[:, 1] < img_wh[1])
                 covered_by_cam = (uvd[:, 2] >= NEAR_DISTANCE) & in_image  # (N_cams, chunk)
                 # if the cell is visible by at least one camera
-                self.count_grid[c, indices[i:i + chunk]] = \
-                    count = covered_by_cam.sum(0) / N_cams
+                self.count_grid[c, indices[i:i + chunk]] = count = covered_by_cam.sum(0) / N_cams
 
                 too_near_to_cam = (uvd[:, 2] < NEAR_DISTANCE) & in_image  # (N, chunk)
                 # if the cell is too close (in front) to any camera
                 too_near_to_any_cam = too_near_to_cam.any(0)
                 # a valid cell should be visible by at least one camera and not too close to any camera
                 valid_mask = (count > 0) & (~too_near_to_any_cam)
-                self.density_grid[c, indices[i:i + chunk]] = \
-                    torch.where(valid_mask, 0., -1.)
+                self.density_grid[c, indices[i:i + chunk]] = torch.where(valid_mask, 0., -1.)
 
     @torch.no_grad()
     def update_density_grid(self, density_threshold, warmup=False, decay=0.95, erode=False):
@@ -121,8 +118,7 @@ class NGPBase(nn.Module):
         if warmup:  # during the first steps
             cells = self._get_all_cells()
         else:
-            cells = self._sample_uniform_and_occupied_cells(self.grid_size ** 3 // 4,
-                                                            density_threshold)
+            cells = self._sample_uniform_and_occupied_cells(self.grid_size ** 3 // 4, density_threshold)
         # infer sigmas
         for c in range(self.cascades):
             indices, coords = cells[c]
@@ -136,14 +132,13 @@ class NGPBase(nn.Module):
         if erode:
             # My own logic. decay more the cells that are visible to few cameras
             decay = torch.clamp(decay ** (1 / self.count_grid), 0.1, 0.95)
-        self.density_grid = torch.where(self.density_grid < 0,
-                                        self.density_grid,
-                                        torch.maximum(self.density_grid * decay, density_grid_tmp))
+        m = self.density_grid >= 0
+        density_grid_new = torch.maximum(self.density_grid * decay, density_grid_tmp)
+        self.density_grid.masked_scatter_(m, density_grid_new[m])
 
         mean_density = self.density_grid[self.density_grid > 0].mean().item()
 
-        vren.packbits(self.density_grid, min(mean_density, density_threshold),
-                      self.density_bitfield)
+        vren.packbits(self.density_grid, min(mean_density, density_threshold), self.density_bitfield)
 
     def density(self, x):
         raise NotImplementedError()

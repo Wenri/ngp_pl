@@ -94,7 +94,7 @@ class NeRFSystem(LightningModule):
         kwargs = {'test_time': split != 'train',
                   'random_bg': self.hparams.random_bg}
         if self.hparams.dataset_name in ['colmap', 'nerfpp']:
-            kwargs['exp_step_factor'] = 1 / 256
+            kwargs['exp_step_factor'] = 0  # 1 / 256
         if self.hparams.use_exposure:
             kwargs['exposure'] = batch['exposure']
 
@@ -161,8 +161,8 @@ class NeRFSystem(LightningModule):
     def training_step(self, batch, batch_nb, *args):
         if self.global_step % self.update_interval == 0:
             self.model.update_density_grid(0.01 * MAX_SAMPLES / 3 ** 0.5,
-                                           warmup=True,  # self.global_step < self.warmup_steps,
-                                           erode=self.hparams.dataset_name == 'colmap')
+                                           self.global_step < self.warmup_steps,
+                                           erode=False)  # self.hparams.dataset_name == 'colmap')
 
         results = self(batch, split='train')
         loss_d = self.loss(results, batch)
