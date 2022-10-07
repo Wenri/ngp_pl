@@ -61,7 +61,8 @@ def get_rays(directions, c2w):
         # Rotate ray directions from camera coordinate to the world coordinate
         rays_d = directions @ c2w[:, :3].T
     else:
-        rays_d = rearrange(directions, 'n c -> n 1 c') @ c2w[..., :3].mT
+        rays_d = rearrange(directions, 'n c -> n 1 c') @ \
+                 rearrange(c2w[..., :3], 'n a b -> n b a')
         rays_d = rearrange(rays_d, 'n 1 c -> n c')
     # The origin of all rays is the camera origin in world coordinate
     rays_o = c2w[..., 3].expand_as(rays_d)
@@ -76,24 +77,26 @@ def axisangle_to_R(v):
     from https://github.com/ActiveVisionLab/nerfmm/blob/main/utils/lie_group_helper.py#L47
 
     Inputs:
-        v: (B, 3)
-    
+        v: (3) or (B, 3)
+
     Outputs:
-        R: (B, 3, 3)
+        R: (3, 3) or (B, 3, 3)
     """
-    zero = torch.zeros_like(v[..., :1])  # (B, 1)
-    skew_v0 = torch.cat([zero, -v[..., 2:3], v[..., 1:2]], dim=-1)  # (B, 3)
-    skew_v1 = torch.cat([v[..., 2:3], zero, -v[..., 0:1]], dim=-1)
-    skew_v2 = torch.cat([-v[..., 1:2], v[..., 0:1], zero], dim=-1)
-    skew_v = torch.stack([skew_v0, skew_v1, skew_v2], dim=-1)  # (B, 3, 3)
+    v_ndim = v.ndim
+    if v_ndim == 1:
+        v = rearrange(v, 'c -> 1 c')
+    zero = torch.zeros_like(v[:, :1])  # (B, 1)
+    skew_v0 = torch.cat([zero, -v[:, 2:3], v[:, 1:2]], 1)  # (B, 3)
+    skew_v1 = torch.cat([v[:, 2:3], zero, -v[:, 0:1]], 1)
+    skew_v2 = torch.cat([-v[:, 1:2], v[:, 0:1], zero], 1)
+    skew_v = torch.stack([skew_v0, skew_v1, skew_v2], dim=1)  # (B, 3, 3)
 
-    norm_v = torch.norm(v, dim=-1) + 1e-7
-    norm_v.unsqueeze_(-1)
-    norm_v.unsqueeze_(-1)
-
+    norm_v = rearrange(torch.norm(v, dim=1) + 1e-7, 'b -> b 1 1')
     eye = torch.eye(3, device=v.device)
     R = eye + (torch.sin(norm_v) / norm_v) * skew_v + \
         ((1 - torch.cos(norm_v)) / norm_v ** 2) * (skew_v @ skew_v)
+    if v_ndim == 1:
+        R = rearrange(R, '1 c d -> c d')
     return R
 
 

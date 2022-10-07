@@ -62,7 +62,7 @@ class NeRFSystem(LightningModule):
         self.warmup_steps = 256
         self.update_interval = 16
 
-        self.loss = NeRFLoss()
+        self.loss = NeRFLoss(lambda_distortion=self.hparams.distortion_loss_w)
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
@@ -86,15 +86,14 @@ class NeRFSystem(LightningModule):
         if self.hparams.optimize_ext:
             dR = axisangle_to_R(self.dR[batch['img_idxs']])
             poses[..., :3] = dR @ poses[..., :3]
-            dT = self.dT[batch['img_idxs']]
-            poses[..., 3] += dT
+            poses[..., 3] += self.dT[batch['img_idxs']]
 
         rays_o, rays_d = get_rays(directions, poses)
 
         kwargs = {'test_time': split != 'train',
                   'random_bg': self.hparams.random_bg}
-        if self.hparams.dataset_name in ['colmap', 'nerfpp']:
-            kwargs['exp_step_factor'] = 0  # 1 / 256
+        if self.hparams.scale > 0.5:
+            kwargs['exp_step_factor'] = 1/256
         if self.hparams.use_exposure:
             kwargs['exposure'] = batch['exposure']
 
@@ -132,10 +131,7 @@ class NeRFSystem(LightningModule):
         self.net_opt = FusedAdam(net_params, self.hparams.lr, eps=1e-15)
         opts += [self.net_opt]
         if self.hparams.optimize_ext:
-            # learning rate is hard-coded
-            pose_r_opt = FusedAdam([self.dR], 1e-6)
-            pose_t_opt = FusedAdam([self.dT], 1e-6)
-            opts += [pose_r_opt, pose_t_opt]
+            opts += [FusedAdam([self.dR, self.dT], 1e-6)] # learning rate is hard-coded
         net_sch = CosineAnnealingLR(self.net_opt,
                                     self.hparams.num_epochs,
                                     self.hparams.lr / 30)
@@ -178,7 +174,10 @@ class NeRFSystem(LightningModule):
             self.train_psnr(results['rgb'], batch['rgb'])
         self.log('lr', self.net_opt.param_groups[0]['lr'])
         self.log('train/loss', loss)
-        self.log('train/s_per_ray', results['total_samples'] / len(batch['rgb']), True)
+        # ray marching samples per ray (occupied space on the ray)
+        self.log('train/rm_s', results['rm_samples']/len(batch['rgb']), True)
+        # volume rendering samples per ray (stops marching when transmittance drops below 1e-4)
+        self.log('train/vr_s', results['vr_samples']/len(batch['rgb']), True)
         self.log('train/psnr', self.train_psnr, True)
 
         return loss
