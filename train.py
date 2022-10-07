@@ -72,8 +72,8 @@ class NeRFSystem(LightningModule):
                 p.requires_grad = False
 
         rgb_act = 'None' if self.hparams.use_exposure else 'Sigmoid'
-        # self.model = NGP(scale=self.hparams.scale, rgb_act=rgb_act)
-        self.model = NeRF(scale=self.hparams.scale, rgb_act=rgb_act)
+        self.model = NGP(scale=self.hparams.scale, rgb_act=rgb_act)
+        # self.model = NeRF(scale=self.hparams.scale, rgb_act=rgb_act)
 
     def forward(self, batch, split):
         if split == 'train':
@@ -93,7 +93,7 @@ class NeRFSystem(LightningModule):
         kwargs = {'test_time': split != 'train',
                   'random_bg': self.hparams.random_bg}
         if self.hparams.scale > 0.5:
-            kwargs['exp_step_factor'] = 1/256
+            kwargs['exp_step_factor'] = 1 / 256
         if self.hparams.use_exposure:
             kwargs['exposure'] = batch['exposure']
 
@@ -131,7 +131,7 @@ class NeRFSystem(LightningModule):
         self.net_opt = FusedAdam(net_params, self.hparams.lr, eps=1e-15)
         opts += [self.net_opt]
         if self.hparams.optimize_ext:
-            opts += [FusedAdam([self.dR, self.dT], 1e-6)] # learning rate is hard-coded
+            opts += [FusedAdam([self.dR, self.dT], 1e-6)]  # learning rate is hard-coded
         net_sch = CosineAnnealingLR(self.net_opt,
                                     self.hparams.num_epochs,
                                     self.hparams.lr / 30)
@@ -175,9 +175,9 @@ class NeRFSystem(LightningModule):
         self.log('lr', self.net_opt.param_groups[0]['lr'])
         self.log('train/loss', loss)
         # ray marching samples per ray (occupied space on the ray)
-        self.log('train/rm_s', results['rm_samples']/len(batch['rgb']), True)
+        self.log('train/rm_s', results['rm_samples'] / len(batch['rgb']), True)
         # volume rendering samples per ray (stops marching when transmittance drops below 1e-4)
-        self.log('train/vr_s', results['vr_samples']/len(batch['rgb']), True)
+        self.log('train/vr_s', results['vr_samples'] / len(batch['rgb']), True)
         self.log('train/psnr', self.train_psnr, True)
 
         return loss

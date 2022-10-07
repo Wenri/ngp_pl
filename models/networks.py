@@ -85,61 +85,62 @@ class NGPBase(nn.Module):
         """
         N_cams = poses.shape[0]
         self.count_grid = torch.zeros_like(self.density_grid)
-        w2c_R = rearrange(poses[:, :3, :3], 'n a b -> n b a') # (N_cams, 3, 3)
-        w2c_T = -w2c_R@poses[:, :3, 3:] # (N_cams, 3, 1)
-        cells = self.get_all_cells()
+        w2c_R = rearrange(poses[:, :3, :3], 'n a b -> n b a')  # (N_cams, 3, 3)
+        w2c_T = -w2c_R @ poses[:, :3, 3:]  # (N_cams, 3, 1)
+        cells = self._get_all_cells()
         for c in range(self.cascades):
             indices, coords = cells[c]
             for i in range(0, len(indices), chunk):
-                xyzs = coords[i:i+chunk]/(self.grid_size-1)*2-1
-                s = min(2**(c-1), self.scale)
-                half_grid_size = s/self.grid_size
-                xyzs_w = (xyzs*(s-half_grid_size)).T # (3, chunk)
-                xyzs_c = w2c_R @ xyzs_w + w2c_T # (N_cams, 3, chunk)
-                uvd = K @ xyzs_c # (N_cams, 3, chunk)
-                uv = uvd[:, :2]/uvd[:, 2:] # (N_cams, 2, chunk)
-                in_image = (uvd[:, 2]>=0)& \
-                           (uv[:, 0]>=0)&(uv[:, 0]<img_wh[0])& \
-                           (uv[:, 1]>=0)&(uv[:, 1]<img_wh[1])
-                covered_by_cam = (uvd[:, 2]>=NEAR_DISTANCE)&in_image # (N_cams, chunk)
+                xyzs = coords[i:i + chunk] / (self.grid_size - 1) * 2 - 1
+                s = min(2 ** (c - 1), self.scale)
+                half_grid_size = s / self.grid_size
+                xyzs_w = (xyzs * (s - half_grid_size)).T  # (3, chunk)
+                xyzs_c = w2c_R @ xyzs_w + w2c_T  # (N_cams, 3, chunk)
+                uvd = K @ xyzs_c  # (N_cams, 3, chunk)
+                uv = uvd[:, :2] / uvd[:, 2:]  # (N_cams, 2, chunk)
+                in_image = (uvd[:, 2] >= 0) & \
+                           (uv[:, 0] >= 0) & (uv[:, 0] < img_wh[0]) & \
+                           (uv[:, 1] >= 0) & (uv[:, 1] < img_wh[1])
+                covered_by_cam = (uvd[:, 2] >= NEAR_DISTANCE) & in_image  # (N_cams, chunk)
                 # if the cell is visible by at least one camera
-                self.count_grid[c, indices[i:i+chunk]] = \
-                    count = covered_by_cam.sum(0)/N_cams
+                self.count_grid[c, indices[i:i + chunk]] = \
+                    count = covered_by_cam.sum(0) / N_cams
 
-                too_near_to_cam = (uvd[:, 2]<NEAR_DISTANCE)&in_image # (N, chunk)
+                too_near_to_cam = (uvd[:, 2] < NEAR_DISTANCE) & in_image  # (N, chunk)
                 # if the cell is too close (in front) to any camera
                 too_near_to_any_cam = too_near_to_cam.any(0)
                 # a valid cell should be visible by at least one camera and not too close to any camera
-                valid_mask = (count>0)&(~too_near_to_any_cam)
-                self.density_grid[c, indices[i:i+chunk]] = \
+                valid_mask = (count > 0) & (~too_near_to_any_cam)
+                self.density_grid[c, indices[i:i + chunk]] = \
                     torch.where(valid_mask, 0., -1.)
+
     @torch.no_grad()
     def update_density_grid(self, density_threshold, warmup=False, decay=0.95, erode=False):
         density_grid_tmp = torch.zeros_like(self.density_grid)
-        if warmup: # during the first steps
-            cells = self.get_all_cells()
+        if warmup:  # during the first steps
+            cells = self._get_all_cells()
         else:
-            cells = self.sample_uniform_and_occupied_cells(self.grid_size**3//4,
-                                                           density_threshold)
+            cells = self._sample_uniform_and_occupied_cells(self.grid_size ** 3 // 4,
+                                                            density_threshold)
         # infer sigmas
         for c in range(self.cascades):
             indices, coords = cells[c]
-            s = min(2**(c-1), self.scale)
-            half_grid_size = s/self.grid_size
-            xyzs_w = (coords/(self.grid_size-1)*2-1)*(s-half_grid_size)
+            s = min(2 ** (c - 1), self.scale)
+            half_grid_size = s / self.grid_size
+            xyzs_w = (coords / (self.grid_size - 1) * 2 - 1) * (s - half_grid_size)
             # pick random position in the cell by adding noise in [-hgs, hgs]
-            xyzs_w += (torch.rand_like(xyzs_w)*2-1) * half_grid_size
+            xyzs_w += (torch.rand_like(xyzs_w) * 2 - 1) * half_grid_size
             density_grid_tmp[c, indices] = self.density(xyzs_w)
 
         if erode:
             # My own logic. decay more the cells that are visible to few cameras
-            decay = torch.clamp(decay**(1/self.count_grid), 0.1, 0.95)
+            decay = torch.clamp(decay ** (1 / self.count_grid), 0.1, 0.95)
         self.density_grid = \
-            torch.where(self.density_grid<0,
+            torch.where(self.density_grid < 0,
                         self.density_grid,
-                        torch.maximum(self.density_grid*decay, density_grid_tmp))
+                        torch.maximum(self.density_grid * decay, density_grid_tmp))
 
-        mean_density = self.density_grid[self.density_grid>0].mean().item()
+        mean_density = self.density_grid[self.density_grid > 0].mean().item()
 
         vren.packbits(self.density_grid, min(mean_density, density_threshold),
                       self.density_bitfield)
